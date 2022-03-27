@@ -31,7 +31,7 @@ type Privacy struct {
     rootCid        cids.Cid
 }
 
-var prv *Privacy = nil
+var Prv *Privacy = nil
 var MINGETTIMES int = 5
 
 func init() {
@@ -39,7 +39,7 @@ func init() {
     if _, err := io.ReadFull(rand.Reader, key); err != nil {
         fmt.Println(err)
     }
-    prv = NewPrivacy(key)
+    Prv = NewPrivacy(key)
 }
 
 func NewPrivacy(key []byte) *Privacy {
