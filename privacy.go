@@ -49,7 +49,7 @@ func NewPrivacy(key []byte) *Privacy {
     }
 }
 
-func (p *Privacy) addCidInfo(path string, cid string) {
+func (p *Privacy) AddCidInfo(path string, cid string) {
     p.cidsLock.Lock()
     defer p.cidsLock.Unlock()
 
@@ -64,20 +64,20 @@ func (p *Privacy) addCidInfo(path string, cid string) {
     p.cids[path].order.Append(cid)
 }
 
-func (p *Privacy) clearFileInfo() {
+func (p *Privacy) ClearFileInfo() {
     p.cidsLock.Lock()
     defer p.cidsLock.Unlock()
     p.cids = make(map[string]NodeInfo)
 }
 
-func (p *Privacy) setFileInfo(path string, cid string) {
+func (p *Privacy) SetFileInfo(path string, cid string) {
     p.cidsLock.Lock()
     defer p.cidsLock.Unlock()
     p.cids[cid] = p.cids[path]
     delete(p.cids, path)
 }
 
-func (p *Privacy) updateFileInfo(cid string) {
+func (p *Privacy) UpdateFileInfo(cid string) {
     p.cidsLock.Lock()
     defer p.cidsLock.Unlock()
     for key := range p.cids {
@@ -93,13 +93,13 @@ func (p *Privacy) updateFileInfo(cid string) {
     }
 }
 
-func (p *Privacy) setContext(ctx context.Context, dagServ ipld.DAGService, cid cids.Cid) {
+func (p *Privacy) SetContext(ctx context.Context, dagServ ipld.DAGService, cid cids.Cid) {
     p.ctx = ctx
     p.dagServ = dagServ
     p.rootCid = cid
 }
 
-func (p *Privacy) getReader() (io.Reader, error) {
+func (p *Privacy) GetReader() (io.Reader, error) {
     p.cidsLock.Lock()
     defer p.cidsLock.Unlock()
     cid := p.rootCid.String()
@@ -130,7 +130,7 @@ func (p *Privacy) getReader() (io.Reader, error) {
     return &b, nil
 }
 
-func (p *Privacy) triggerEnd(cid string) bool {
+func (p *Privacy) TriggerEnd(cid string) bool {
     p.compBlkNumLock.Lock()
     defer p.compBlkNumLock.Unlock()
     return p.compBlkNum[cid] == len(p.cids[cid].times)
@@ -142,7 +142,7 @@ func (p *Privacy) setKey(key []byte) {
 
 
 // --------------- Encrypto related --------------- //
-func (p *Privacy) encrypt(plainText []byte) ([]byte, error) {
+func (p *Privacy) Encrypt(plainText []byte) ([]byte, error) {
     c, err := aes.NewCipher(p.secretKey)
     if err != nil {
         return nil, err
@@ -158,7 +158,7 @@ func (p *Privacy) encrypt(plainText []byte) ([]byte, error) {
     return gcm.Seal(nonce, nonce, plainText, nil), nil
 }
 
-func (p *Privacy) decrypt(cipherText []byte) ([]byte, error) {
+func (p *Privacy) Decrypt(cipherText []byte) ([]byte, error) {
     c, err := aes.NewCipher(p.secretKey)
     if err != nil {
         return nil, err
