@@ -3,11 +3,13 @@ package privacy
 import (
     "crypto/aes"
     "crypto/cipher"
+    "crypto/rand"
     "errors"
     "io"
     "sync"
     "context"
     "bytes"
+    "fmt"
     ipld "github.com/ipfs/go-ipld-format"
     cids "github.com/ipfs/go-cid"
 )
@@ -29,11 +31,15 @@ type Privacy struct {
     rootCid        cids.Cid
 }
 
-var privacy *Privacy = nil
+var prv *Privacy = nil
 var MINGETTIMES int = 5
 
 func init() {
-    privacy = NewPrivacy(make([]byte, 0))
+    key := make([]byte, 32)
+    if _, err := io.ReadFull(rand.Reader, key); err != nil {
+        fmt.Println(err)
+    }
+    prv = NewPrivacy(key)
 }
 
 func NewPrivacy(key []byte) *Privacy {
