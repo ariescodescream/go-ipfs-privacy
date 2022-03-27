@@ -121,7 +121,7 @@ func (p *Privacy) GetReader() (io.Reader, error) {
             return nil, getErr
         }
 
-        cb, decErr := p.decrypt(node.RawData())
+        cb, decErr := p.Decrypt(node.RawData())
         if decErr != nil {
             return nil, decErr
         }
