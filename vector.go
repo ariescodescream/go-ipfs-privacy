@@ -14,11 +14,6 @@ func NewVector(size int) *Vector {
 }
 
 func (v *Vector) Append(str string) {
-    if len(v.container) == v.capacity {
-        newContainer := make([]string, len(v.container), (cap(v.container)*2))
-        copy(newContainer, v.container)
-        v.container = newContainer
-    }
     v.container = append(v.container, str)
 }
 

@@ -3,43 +3,31 @@ package privacy
 import (
     "crypto/aes"
     "crypto/cipher"
-    "crypto/rand"
     "errors"
-    "io"
     "sync"
-    "context"
-    "bytes"
     "fmt"
-    ipld "github.com/ipfs/go-ipld-format"
-    cids "github.com/ipfs/go-cid"
 )
 
+// times indicates how many times the node should be retrieved
+// size indicates origin file size
 type NodeInfo struct {
-    times map[string]int
-    order *Vector
+    times     map[string]int
+    size      int64
+    allBlkNum int
+    sndBlkNum int
 }
 
 type Privacy struct {
     secretKey      []byte
     cids           map[string]NodeInfo
     cidsLock       sync.Mutex
-    compBlkNum     map[string]int
-    compBlkNumLock sync.Mutex
-
-    ctx            context.Context
-    dagServ        ipld.DAGService
-    rootCid        cids.Cid
 }
 
 var Prv *Privacy = nil
-var MINGETTIMES int = 5
+var MINGETTIMES int = 3
 
 func init() {
-    key := make([]byte, 32)
-    if _, err := io.ReadFull(rand.Reader, key); err != nil {
-        fmt.Println(err)
-    }
-    Prv = NewPrivacy(key)
+    Prv = NewPrivacy(make([]byte, 0))
 }
 
 func NewPrivacy(key []byte) *Privacy {
@@ -49,25 +37,48 @@ func NewPrivacy(key []byte) *Privacy {
     }
 }
 
-func (p *Privacy) AddCidInfo(path string, cid string) {
+func (p *Privacy) AddCidInfo(path string, cid string, size int64) {
     p.cidsLock.Lock()
     defer p.cidsLock.Unlock()
 
     if _, ok := p.cids[path]; !ok {
         p.cids[path] = NodeInfo{
             make(map[string]int),
-            NewVector(0),
+            0,
+            0,
+            0,
         }
     }
 
-    p.cids[path].times[cid] += MINGETTIMES
-    p.cids[path].order.Append(cid)
+    entry, _ := p.cids[path]
+    entry.times[cid] += MINGETTIMES
+    entry.size += size
+    entry.allBlkNum += MINGETTIMES
+    p.cids[path] = entry
 }
 
-func (p *Privacy) ClearFileInfo() {
+func (p *Privacy) GetProgress(cid string) (int, error) {
     p.cidsLock.Lock()
     defer p.cidsLock.Unlock()
-    p.cids = make(map[string]NodeInfo)
+    if entry, ok := p.cids[cid]; ok {
+        return entry.sndBlkNum / entry.allBlkNum, nil
+    }
+    return 0, fmt.Errorf("cid(%s) not found.", cid)
+}
+
+func (p *Privacy) GetRealSize(cid string) (int64, error) {
+    p.cidsLock.Lock()
+    defer p.cidsLock.Unlock()
+    if _, ok := p.cids[cid]; !ok {
+        return 0, fmt.Errorf("cid(%s) not found.", cid)
+    }
+    return p.cids[cid].size, nil
+}
+
+func (p *Privacy) RemoveFileInfo(cid string) {
+    p.cidsLock.Lock()
+    defer p.cidsLock.Unlock()
+    delete(p.cids, cid)
 }
 
 func (p *Privacy) SetFileInfo(path string, cid string) {
@@ -77,72 +88,42 @@ func (p *Privacy) SetFileInfo(path string, cid string) {
     delete(p.cids, path)
 }
 
-func (p *Privacy) UpdateFileInfo(cid string) {
+func (p *Privacy) updateFileInfo(cid string) {
     p.cidsLock.Lock()
     defer p.cidsLock.Unlock()
-    for key := range p.cids {
-        if _, ok := p.cids[key].times[cid]; ok {
-            p.cids[key].times[cid]--
-            if p.cids[key].times[cid] == 0 {
-                p.compBlkNumLock.Lock()
-                defer p.compBlkNumLock.Unlock()
-                p.compBlkNum[key]++
+    for k, v := range p.cids {
+        if _, ok := v.times[cid]; ok {
+            v.times[cid]--
+            if v.times[cid] > 0 {
+                v.sndBlkNum++
             }
+            p.cids[k] = v
             return
         }
     }
 }
 
-func (p *Privacy) SetContext(ctx context.Context, dagServ ipld.DAGService, cid cids.Cid) {
-    p.ctx = ctx
-    p.dagServ = dagServ
-    p.rootCid = cid
-}
-
-func (p *Privacy) GetReader() (io.Reader, error) {
+func (p *Privacy) TriggerEnd(cid string) bool {
     p.cidsLock.Lock()
     defer p.cidsLock.Unlock()
-    cid := p.rootCid.String()
-    if _, ok := p.cids[cid]; !ok {
-        return nil, errors.New("Indicated cid is not existed")
-    }
-
-    var b bytes.Buffer
-    size := p.cids[cid].order.Size()
-    for i := 0; i < size; i++ {
-        child, _ := p.cids[cid].order.At(i)
-        rcid, parseErr := cids.Parse(child)
-        if parseErr != nil {
-            return nil, parseErr
-        }
-
-        node, getErr := p.dagServ.Get(p.ctx, rcid)
-        if getErr != nil {
-            return nil, getErr
-        }
-
-        cb, decErr := p.Decrypt(node.RawData())
-        if decErr != nil {
-            return nil, decErr
-        }
-        b.Write(cb)
-    }
-    return &b, nil
+    return p.cids[cid].allBlkNum == p.cids[cid].sndBlkNum
 }
 
-func (p *Privacy) TriggerEnd(cid string) bool {
-    p.compBlkNumLock.Lock()
-    defer p.compBlkNumLock.Unlock()
-    return p.compBlkNum[cid] == len(p.cids[cid].times)
-}
-
-func (p *Privacy) setKey(key []byte) {
+func (p *Privacy) SetKey(key []byte) error {
+    if len(p.secretKey) != 0 {
+        return errors.New("Private key has been set.")
+    }
     p.secretKey = key
+    return nil
 }
 
 
-// --------------- Encrypto related --------------- //
+// --------------- Crypto related --------------- //
 func (p *Privacy) Encrypt(plainText []byte) ([]byte, error) {
+    if len(p.secretKey) == 0 {
+        return nil, errors.New("Secret key has been not set.")
+    }
+
     c, err := aes.NewCipher(p.secretKey)
     if err != nil {
         return nil, err
@@ -159,6 +140,10 @@ func (p *Privacy) Encrypt(plainText []byte) ([]byte, error) {
 }
 
 func (p *Privacy) Decrypt(cipherText []byte) ([]byte, error) {
+    if len(p.secretKey) == 0 {
+        return nil, errors.New("Secret key has been not set.")
+    }
+
     c, err := aes.NewCipher(p.secretKey)
     if err != nil {
         return nil, err
@@ -176,4 +161,16 @@ func (p *Privacy) Decrypt(cipherText []byte) ([]byte, error) {
 
     nonce, cipherText := cipherText[:nonceSize], cipherText[nonceSize:]
     return gcm.Open(nil, nonce, cipherText, nil)
+}
+
+func (p *Privacy) DecryptWithCid(cipherText []byte, cid string) ([]byte, error) {
+    if len(p.secretKey) == 0 {
+        return nil, errors.New("Secret key has been not set.")
+    }
+
+    plainText, err := p.Decrypt(cipherText)
+    if err == nil {
+        p.updateFileInfo(cid)
+    }
+    return plainText, err
 }

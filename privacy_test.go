@@ -3,6 +3,7 @@ package privacy
 import (
     "io"
     "fmt"
+    "reflect"
     "testing"
     "crypto/rand"
 )
@@ -15,6 +16,10 @@ func TestEncrypt(t *testing.T) {
     p := NewPrivacy(key)
     plainText := make([]byte, 34)
     cipherText, _ := p.Encrypt(plainText)
+    plainTxt, _ := p.Decrypt(cipherText)
+    if !reflect.DeepEqual(plainTxt, plainText) {
+        t.Fail()
+    }
     fmt.Printf("plain text length:%d\n", len(plainText))
     fmt.Printf("cipher text length:%d\n", len(cipherText))
 }
