@@ -88,7 +88,7 @@ func (p *Privacy) SetFileInfo(path string, cid string) {
     delete(p.cids, path)
 }
 
-func (p *Privacy) updateFileInfo(cid string) {
+func (p *Privacy) UpdateFileInfo(cid string) {
     p.cidsLock.Lock()
     defer p.cidsLock.Unlock()
     for k, v := range p.cids {
@@ -161,16 +161,4 @@ func (p *Privacy) Decrypt(cipherText []byte) ([]byte, error) {
 
     nonce, cipherText := cipherText[:nonceSize], cipherText[nonceSize:]
     return gcm.Open(nil, nonce, cipherText, nil)
-}
-
-func (p *Privacy) DecryptWithCid(cipherText []byte, cid string) ([]byte, error) {
-    if len(p.secretKey) == 0 {
-        return nil, errors.New("Secret key has been not set.")
-    }
-
-    plainText, err := p.Decrypt(cipherText)
-    if err == nil {
-        p.updateFileInfo(cid)
-    }
-    return plainText, err
 }
