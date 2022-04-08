@@ -134,7 +134,6 @@ func (p *Privacy) SetFileInfo(path string, cid string) {
 func (p *Privacy) UpdateFileInfo(cid string) {
     p.cidsLock.Lock()
     defer p.cidsLock.Unlock()
-    fmt.Printf("UpdateFileInfo cid:%s\n", cid)
     for k, v := range p.cids {
         if _, ok := v.times[cid]; ok {
             v.times[cid]--
