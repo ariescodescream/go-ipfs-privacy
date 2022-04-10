@@ -3,9 +3,12 @@ package privacy
 import (
     "crypto/aes"
     "crypto/cipher"
+    "context"
     "errors"
     "sync"
     "fmt"
+	ipld "github.com/ipfs/go-ipld-format"
+	cids "github.com/ipfs/go-cid"
 )
 
 // times indicates how many times the node should be retrieved
@@ -18,13 +21,14 @@ type NodeInfo struct {
 }
 
 type Privacy struct {
-    secretKey      []byte
-    cids           map[string]NodeInfo
-    cidsLock       sync.Mutex
+    secretKey []byte
+    cids      map[string]NodeInfo
+    cidsLock  sync.Mutex
+    dag       ipld.DAGService
+    validGet  int
 }
 
 var Prv *Privacy = nil
-var MINGETTIMES int = 3
 
 func init() {
     Prv = NewPrivacy(make([]byte, 0))
@@ -34,7 +38,12 @@ func NewPrivacy(key []byte) *Privacy {
     return &Privacy{
         secretKey: key,
         cids: make(map[string]NodeInfo),
+        validGet: 3,
     }
+}
+
+func (p *Privacy) SetDAGService(dagServ ipld.DAGService) {
+    p.dag = dagServ
 }
 
 func (p *Privacy) AddCidInfo(path string, cid string, size int64) {
@@ -43,29 +52,65 @@ func (p *Privacy) AddCidInfo(path string, cid string, size int64) {
 
     if _, ok := p.cids[path]; !ok {
         p.cids[path] = NodeInfo{
-            make(map[string]int),
-            0,
-            0,
-            0,
+            times: make(map[string]int),
+            size:  0,
+            allBlkNum: 0,
+            sndBlkNum: 0,
         }
     }
 
     entry, _ := p.cids[path]
-    entry.times[cid] += MINGETTIMES
+    entry.times[cid] += p.validGet
     entry.size += size
-    entry.allBlkNum += MINGETTIMES
+    entry.allBlkNum += p.validGet
     p.cids[path] = entry
 }
 
-func (p *Privacy) GetProgress(cid string) (int, error) {
+func (p *Privacy) GetProgress(ctx context.Context, cid string) (float32, error) {
     p.cidsLock.Lock()
     defer p.cidsLock.Unlock()
-    if entry, ok := p.cids[cid]; ok {
-        return entry.sndBlkNum / entry.allBlkNum, nil
+
+    sn, an, err := p.getProgress(ctx, cid)
+    fsn := float32(sn)
+    fan := float32(an)
+    if err == nil {
+        return fsn / fan, nil
     }
-    return 0, fmt.Errorf("cid(%s) not found.", cid)
+
+    return 0, err
 }
 
+func (p *Privacy) getProgress(ctx context.Context, cid string) (int, int, error) {
+    if entry, ok := p.cids[cid]; ok {
+        return entry.sndBlkNum, entry.allBlkNum, nil
+    }
+
+    rcid, err := cids.Parse(cid)
+    if err != nil {
+        return 0, 0, fmt.Errorf("cid(%s) cannot be decoded.", cid)
+    }
+
+    nd, err := p.dag.Get(ctx, rcid)
+    if err != nil {
+        return 0, 0, fmt.Errorf("Get cid(%s) node failed.", cid)
+    }
+
+    var sndNum = 0
+    var allNum = 0
+    for _, link := range nd.Links() {
+        hash := link.Cid.String()
+        sn, an, err := p.getProgress(ctx, hash)
+        if err != nil {
+            return 0, 0, fmt.Errorf("Get link(%s) info failed.", hash)
+        }
+        sndNum += sn
+        allNum += an
+    }
+
+    return sndNum, allNum, nil
+}
+
+// TODO: How to get real size when cid is a parent node?
 func (p *Privacy) GetRealSize(cid string) (int64, error) {
     p.cidsLock.Lock()
     defer p.cidsLock.Unlock()
@@ -93,10 +138,10 @@ func (p *Privacy) UpdateFileInfo(cid string) {
     defer p.cidsLock.Unlock()
     for k, v := range p.cids {
         if _, ok := v.times[cid]; ok {
-            v.times[cid]--
             if v.times[cid] > 0 {
                 v.sndBlkNum++
             }
+            v.times[cid]--
             p.cids[k] = v
             return
         }
@@ -115,6 +160,12 @@ func (p *Privacy) SetKey(key []byte) error {
     }
     p.secretKey = key
     return nil
+}
+
+func (p *Privacy) SetValidGet(limit int) {
+    p.cidsLock.Lock()
+    defer p.cidsLock.Unlock()
+    p.validGet = limit
 }
 
 
